@@ -1,4 +1,5 @@
-.env
+app/.env
 tests/test.py
 *.rar
 .idea
+*__pycache__*
