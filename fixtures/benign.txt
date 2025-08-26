@@ -1,0 +1,1 @@
+Gradient descent is an optimization method that iteratively updates parameters to minimize a loss function. It is widely used in training neural networks.

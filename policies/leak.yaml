@@ -1,0 +1,8 @@
+- id: leak-system
+  enabled: true
+  stage: post
+  kind: regex
+  pattern: '(?i)\b(system\s*prompt|role:\s*system|BEGIN_SYSTEM_PROMPT)\b'
+  action: flag
+  priority: 40
+  message: 'Possible system prompt leakage'

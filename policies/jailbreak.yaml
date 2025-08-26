@@ -1,0 +1,17 @@
+- id: jailbreak-basic
+  enabled: true
+  stage: pre
+  kind: regex
+  pattern: '(?i)\b(ignore|disregard)\s+(all|any|previous)\s+(instructions|rules)\b'
+  action: block
+  priority: 100
+  message: 'Jailbreak pattern detected'
+
+- id: dan-mode
+  enabled: true
+  stage: pre
+  kind: regex
+  pattern: '(?i)\b(DAN|developer\s*mode|jailbreak)\b'
+  action: block
+  priority: 90
+  message: 'Jailbreak keyword detected'

@@ -1,6 +1,4 @@
 .env
 tests/test.py
 *.rar
-fixtures
-policies
 .idea
