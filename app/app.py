@@ -1,5 +1,6 @@
 import uvicorn
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from app.config import load_config
 from app.api.routers import api_router
@@ -14,7 +15,15 @@ app = FastAPI(
     }
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # или ["http://localhost:3000"] если только фронт
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(api_router)
 
 if __name__ == "__main__":
-    uvicorn.run("app.app:app", reload=True,port=8002)
+    uvicorn.run("app.app:app",port=8002, app_dir='app')
