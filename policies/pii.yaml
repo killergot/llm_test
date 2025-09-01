@@ -1,6 +1,6 @@
 - id: redact-email
   enabled: true
-  stage: pre
+  stage: post
   kind: regex
   pattern: '\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'
   flags: 'i'

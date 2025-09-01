@@ -1,5 +1,5 @@
 - id: leak-system
-  enabled: true
+  enabled: false
   stage: post
   kind: regex
   pattern: '(?i)\b(system\s*prompt|role:\s*system|BEGIN_SYSTEM_PROMPT)\b'

@@ -1,6 +1,6 @@
 - id: jailbreak-basic
   enabled: true
-  stage: pre
+  stage: post
   kind: regex
   pattern: '(?i)\b(ignore|disregard)\s+(all|any|previous)\s+(instructions|rules)\b'
   action: block

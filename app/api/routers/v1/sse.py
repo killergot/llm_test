@@ -1,18 +1,25 @@
 # app.py
 import uuid
-from collections import deque
-from typing import AsyncGenerator, Optional, List, Deque
+from pathlib import Path
+from typing import AsyncGenerator, Optional, List
 
+from environs import env, Env
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import StreamingResponse
 import json
 import asyncio
+import logging
 
-
+logging.basicConfig(
+    filename="llm.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 from pydantic import BaseModel
-from starlette.requests import Request
 
+from app.config import load_config, Config
 from app.utils.sse import preprocess_text, format_sse_chunk
+from app.utils.policy import engine, PolicyViolation
 
 router = APIRouter()
 
@@ -25,11 +32,13 @@ class ChatCompletionRequest(BaseModel):
     messages: List[Message]
     stream: Optional[bool] = False
 
-AIGUARD_BUFFER_TOKENS = 10
-AIGUARD_CHUNK_CHARS = 3
-AIGUARD_DELAY = 0.08
-AIGUARD_WINDOW_CHARS = 128
-AIGUARD_ACTION = 'mask'
+conf: Config = load_config()
+
+AIGUARD_BUFFER_TOKENS = conf.aiguard.buffer_tokens
+AIGUARD_CHUNK_CHARS = conf.aiguard.chunk_chars
+AIGUARD_DELAY = conf.aiguard.ttfb_deadline_ms
+AIGUARD_WINDOW_CHARS = conf.aiguard.window_chars
+AIGUARD_ACTION = conf.aiguard.action
 
 async def stream_tokens(text: str) -> AsyncGenerator[str, None]:
     for i in range(0, len(text), AIGUARD_CHUNK_CHARS):
@@ -37,75 +46,101 @@ async def stream_tokens(text: str) -> AsyncGenerator[str, None]:
         await asyncio.sleep(AIGUARD_DELAY)
 
 
-
 async def generate_response(messages: list, stream: bool) -> AsyncGenerator[str, None]:
-    # Фиксированный текст для демо (в дальнейшем будем выбирать из fixtures/)
-    demo_text = ("Это    демонстрационный\u200B текст ответа              от мок-LLM.                  \uFEFFОн будет разбит на чанки.   ")
+    conf = load_config()
+    AIGUARD = conf.aiguard.action
+    # Это сделано чисто для юнит тестов, чтоб можно было менять режим
 
-    if not stream:
-        # Для не потокового режима
-        full_text = ""
-        async for chunk in stream_tokens(demo_text):
-            # Обрабатываем каждый чанк
-            processed_chunk = preprocess_text(chunk)
-            full_text += processed_chunk
-
-        # Финальная обработка полного текста
-        full_text = preprocess_text(full_text)
-
-        response_data = {
-            "id": str(uuid.uuid4()),
-            "object": "chat.completion",
-            "choices": [{
-                "message": {"content": full_text},
-                "index": 0,
-                "finish_reason": "stop"
-            }]
-        }
-        yield json.dumps(response_data)
+    truncate = False if AIGUARD == 'mask' else True
+    try:
+        msg = engine.apply(messages[0].content, stage = 'pre',truncate=truncate)
+    except PolicyViolation as e:
+        yield format_sse_chunk("", finish_reason="content_filter")
         return
 
+    print(msg)
 
-    token_buffer = []  # накапливаем сырые токены/чанки
-    sliding_window = ""  # строка последних X символов для регулярок
-    prev_ended_with_space = False  # чтобы убирать дубли пробелов на стыке пачек
+    if msg.count('inj'):
+        path = 'injection'
+    elif msg.count('leak'):
+        path = 'leak'
+    elif msg.count('pii'):
+        path = 'pii'
+    elif msg.count('secrets'):
+        path = 'secrets'
+    else:
+        path = 'benign'
 
+    full_path: Path = (Path(__file__).parent.parent.parent.parent.parent
+                       / 'fixtures' / (path+'.txt'))
+
+    with open(full_path, "r", encoding="utf-8") as file:
+        demo_text = file.read()
+
+    if not stream:
+        full_text = ""
+        async for chunk in stream_tokens(demo_text):
+            full_text += chunk
+
+        full_text = preprocess_text(full_text)
+        try:
+            full_text = engine.apply(full_text, truncate=truncate)
+        except PolicyViolation as e:
+            yield format_sse_chunk("", finish_reason="content_filter")
+            return
+
+        yield format_sse_chunk(full_text, finish_reason="stop")
+        return
+
+    buffer_chunks = []
+    total_chars = 0
     async for chunk in stream_tokens(demo_text):
-        token_buffer.append(chunk)
+        buffer_chunks.append(chunk)
+        total_chars += len(chunk)
 
-        # Когда накопили больше Y токенов — отдаем все, кроме последних Y
-        while len(token_buffer) > AIGUARD_BUFFER_TOKENS:
-            send_tokens = token_buffer[:-AIGUARD_BUFFER_TOKENS]
-            token_buffer = token_buffer[-AIGUARD_BUFFER_TOKENS:]
+        while total_chars >= AIGUARD_WINDOW_CHARS or len(buffer_chunks) >= AIGUARD_BUFFER_TOKENS:
+            full_text = ''.join(buffer_chunks)
+            current_text = full_text[:AIGUARD_WINDOW_CHARS] if len(full_text) > AIGUARD_WINDOW_CHARS else full_text
+            processed_chars = len(current_text)
 
-            # Склеиваем и нормализуем пачку
-            send_text = preprocess_text("".join(send_tokens))
+            preprocessed = preprocess_text(current_text)
+            try:
+                filtered = engine.apply(preprocessed, truncate=truncate)
+            except PolicyViolation as e:
+                yield format_sse_chunk("", finish_reason="content_filter")
+                return
 
-            # Убираем ДУБЛИ пробелов на стыке с предыдущей отправленной пачкой
-            if prev_ended_with_space and send_text.startswith(' '):
-                send_text = send_text.lstrip()  # срежем ведущие пробелы у новой пачки
+            yield format_sse_chunk(filtered)
 
-            # Обновляем окно и отдаем
-            if send_text:
-                sliding_window = (sliding_window + send_text)[-AIGUARD_WINDOW_CHARS:]
-                # тут могла бы быть логика фильтра по sliding_window
-                yield format_sse_chunk(send_text)
-                prev_ended_with_space = send_text[-1].isspace()
-            # если send_text пустая (вся «очистилась») — просто продолжаем
+            total_chars -= processed_chars
+            new_buffer = []
+            remaining = processed_chars
+            for c in buffer_chunks:
+                if len(c) <= remaining:
+                    remaining -= len(c)
+                else:
+                    new_buffer.append(c[remaining:])
+                    remaining = 0
+            buffer_chunks = new_buffer
 
-    # Финальный слив буфера
-    if token_buffer:
-        send_text = preprocess_text("".join(token_buffer))
-        if prev_ended_with_space and send_text.startswith(' '):
-            send_text = send_text.lstrip()
-        if send_text:
-            yield format_sse_chunk(send_text)
+    if buffer_chunks:
+        full_text = ''.join(buffer_chunks)
+        preprocessed = preprocess_text(full_text)
+        try:
+            filtered = engine.apply(preprocessed,truncate=truncate)
+        except PolicyViolation as e:
+            yield format_sse_chunk("", finish_reason="content_filter")
+            return
+
+        yield format_sse_chunk(filtered)
 
     yield format_sse_chunk("", finish_reason="stop")
     yield "data: [DONE]\n\n"
 
+
 @router.post("/completions")
 async def chat_completions(request: ChatCompletionRequest):
+
     try:
         generator = generate_response(
             messages=request.messages,
@@ -122,7 +157,6 @@ async def chat_completions(request: ChatCompletionRequest):
                 }
             )
 
-        # Для не потокового режима
         response_content = await anext(generator)
         return json.loads(response_content)
 

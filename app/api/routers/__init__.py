@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routers.v1 import router as v1_router
 from app.api.routers.admin import router as admin_router
-from app.api.routers.detector import router as detector_router
+from app.api.routers.general import router as detector_router
 
 api_router = APIRouter()
 api_router.include_router(v1_router, tags=["v1"])

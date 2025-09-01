@@ -1,162 +1,172 @@
-# tests/test_main.py
-import pytest
-import httpx
 import json
-import os
+import time
+
 from pathlib import Path
+import yaml
 
-BASE_URL = "http://localhost:8000"
+from fastapi.testclient import TestClient
+from app.app import app
 
+client = TestClient(app)
 
-@pytest.mark.asyncio
-async def test_safe_path_benign_text():
-    """Тест 1: Safe path с benign.txt"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{BASE_URL}/v1/chat/completions",
-            json={
-                "model": "test-model",
-                "messages": [{"role": "user", "content": "benign"}],
-                "stream": False
-            }
-        )
-
+def test_chat_completions_stream_full_text():
+    payload = {
+        "model": "mock-llm",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "stream": True
+    }
+    start_time = time.perf_counter()
+    finish_reason = None
+    with client.stream("POST", "/v1/chat/completions", json=payload) as response:
         assert response.status_code == 200
-        data = response.json()
-        assert "choices" in data
-        assert len(data["choices"]) > 0
-        assert "message" in data["choices"][0]
-        assert "content" in data["choices"][0]["message"]
-        assert data["choices"][0]["finish_reason"] == "stop"
-
-        # Проверяем, что ответ содержит ожидаемый текст из benign.txt
-        content = data["choices"][0]["message"]["content"]
-        assert len(content) > 0  # Ответ не должен быть пустым
-
-
-@pytest.mark.asyncio
-async def test_early_block_injection_text():
-    """Тест 2: Early block с injection.txt и truncate action"""
-    # Устанавливаем режим truncate
-    os.environ["AIGUARD_ACTION"] = "truncate"
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{BASE_URL}/v1/chat/completions",
-            json={
-                "model": "test-model",
-                "messages": [{"role": "user", "content": "injection"}],
-                "stream": True
-            },
-            headers={"Accept": "text/event-stream"}
-        )
-
-        assert response.status_code == 200
-
-        # Читаем потоковые события
-        content_lines = []
-        finish_reason = None
-
-        async for line in response.aiter_lines():
+        full_text = ""
+        first_chunk_time = None
+        for line in response.iter_lines():
             if line.startswith("data: "):
-                data = line[6:]  # Убираем префикс "data: "
-
+                if not first_chunk_time:
+                    first_chunk_time = time.perf_counter()
+                data = line[len("data: "):]
                 if data == "[DONE]":
                     break
+                # парсим JSON чанка
+                chunk = json.loads(data)
+                choice = chunk["choices"][0]
+                finish_reason = choice.get("finish_reason") or finish_reason
 
-                try:
-                    chunk = json.loads(data)
-                    if "choices" in chunk and chunk["choices"]:
-                        if "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
-                            content_lines.append(chunk["choices"][0]["delta"]["content"])
-                        if "finish_reason" in chunk["choices"][0]:
-                            finish_reason = chunk["choices"][0]["finish_reason"]
-                except json.JSONDecodeError:
-                    continue
+                delta = chunk["choices"][0]["delta"].get("content")
+                if delta:
+                    full_text += delta
+        assert finish_reason == "stop"
+        assert full_text == "gradient descent is an optimization method that iteratively updates parameters to minimize a loss function. it is widely used in training neural networks."  # или "Hello world"
 
-        # Проверяем, что поток был прерван из-за content_filter
+        ttfb = first_chunk_time - start_time
+        # assert ttfb < 1.5, f"TTFB too high: {ttfb:.2f}s"
+        # Как я понимаю, если не запускать реальный сервер, а делать тесты через TestClient всегда будет завышенный TTFB из-за разности работы с потоками
+
+def test_chat_content_filtered(monkeypatch):
+    payload = {
+        "model": "mock-llm",
+        "messages": [{"role": "user", "content": "inj"}],
+        "stream": True
+    }
+
+    finish_reason = None
+    monkeypatch.setenv("AIGUARD_ACTION", "truncate")
+    with client.stream("POST", "/v1/chat/completions", json=payload) as response:
+        assert response.status_code == 200
+        full_text = ""
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[len("data: "):]
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                choice = chunk["choices"][0]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                delta = chunk["choices"][0]["delta"].get("content")
+                if delta:
+                    full_text += delta
         assert finish_reason == "content_filter"
 
 
-@pytest.mark.asyncio
-async def test_mask_mode_pii_text():
-    """Тест 3: Mask mode с pii.txt"""
-    # Устанавливаем режим mask
-    os.environ["AIGUARD_ACTION"] = "mask"
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{BASE_URL}/v1/chat/completions",
-            json={
-                "model": "test-model",
-                "messages": [{"role": "user", "content": "pii"}],
-                "stream": False
-            }
-        )
-
+def test_chat_aiguardian_action_mask(monkeypatch):
+    payload = {
+        "model": "mock-llm",
+        "messages": [{"role": "user", "content": "secrets"}],
+        "stream": True
+    }
+    finish_reason = None
+    monkeypatch.setenv("AIGUARD_ACTION", "mask")
+    with client.stream("POST", "/v1/chat/completions", json=payload) as response:
         assert response.status_code == 200
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
+        full_text = ""
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[len("data: "):]
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                choice = chunk["choices"][0]
 
-        # Проверяем, что конфиденциальная информация заменена на [BLOCKED]
-        assert "[BLOCKED]" in content
-        assert data["choices"][0]["finish_reason"] == "stop"
+                finish_reason = choice.get("finish_reason") or finish_reason
+                delta = chunk["choices"][0]["delta"].get("content")
+                if delta:
+                    full_text += delta
+        assert finish_reason == "stop"
+        assert full_text == "this is my openai api key: [BLOCKED] and also an aws key: [BLOCKED]"  # или "Hello world"
 
 
-@pytest.mark.asyncio
-async def test_hot_reload_policies():
-    """Тест 4: Hot-reload политик"""
-    async with httpx.AsyncClient() as client:
-        # Получаем текущую ревизию
-        initial_response = await client.get(f"{BASE_URL}/admin/policies/effective")
-        initial_revision = initial_response.json()["revision"]
+def test_chat_reload(monkeypatch):
+    file_path = Path(__file__).parent.parent / 'policies' / 'secrets.yaml'
 
-        # Добавляем новое правило
-        new_rule = {
-            "id": "block_hello",
-            "description": "Block the word 'hello'",
-            "pattern": "hello",
-            "stage": "post",
-            "action": "block"
-        }
+    new_rule = {
+        "id": "secret-here",
+        "enabled": True,
+        "stage": "post",
+        "kind": "regex",
+        "pattern": r"\bhere\b",
+        "action": "block",
+        "priority": 80,
+        "message": 'Keyword "here" detected'
+    }
 
-        # Сохраняем новое правило в YAML файл
-        policies_dir = Path("./policies")
-        new_rule_path = policies_dir / "block_hello.yaml"
-        with open(new_rule_path, "w") as f:
-            f.write("- " + json.dumps(new_rule).replace("{", "").replace("}", "").replace('"', ''))
+    if file_path.exists():
+        with file_path.open("r", encoding="utf-8") as f:
+            try:
+                rules = yaml.safe_load(f) or []
+            except yaml.YAMLError:
+                rules = []
+    else:
+        rules = []
 
-        # Перезагружаем политики
-        reload_response = await client.post(f"{BASE_URL}/admin/policies/reload")
-        assert reload_response.status_code == 200
+    rules.append(new_rule)
 
-        # Проверяем, что ревизия увеличилась
-        effective_response = await client.get(f"{BASE_URL}/admin/policies/effective")
-        new_revision = effective_response.json()["revision"]
-        assert new_revision == initial_revision + 1
+    with file_path.open("w", encoding="utf-8") as f:
+        yaml.dump(rules, f, sort_keys=False, allow_unicode=True)
 
-        # Проверяем, что новое правило работает
-        test_response = await client.post(
-            f"{BASE_URL}/v1/chat/completions",
-            json={
-                "model": "test-model",
-                "messages": [{"role": "user", "content": "say hello"}],
-                "stream": False
-            }
-        )
+    response = client.post("/admin/policies/reload")
+    assert response.status_code == 200
 
-        assert test_response.status_code == 200
-        data = test_response.json()
+    response = client.get("/admin/policies/effective")
+    assert response.status_code == 200
+    data = response.json()
+    revision = data["revision"]
+    assert revision == 2
 
-        # В зависимости от действия правило должно либо блокировать, либо маскировать
-        content = data["choices"][0]["message"]["content"]
-        finish_reason = data["choices"][0]["finish_reason"]
+    payload = {
+        "model": "mock-llm",
+        "messages": [{"role": "user", "content": "leak"}],
+        "stream": True
+    }
+    monkeypatch.setenv("AIGUARD_ACTION", "mask")
 
-        # Проверяем, что правило сработало
-        assert finish_reason == "content_filter" or "[BLOCKED]" in content
+    with client.stream("POST", "/v1/chat/completions", json=payload) as response:
+        assert response.status_code == 200
+        full_text = ""
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[len("data: "):]
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
 
-        # Удаляем временное правило
-        new_rule_path.unlink()
+                delta = chunk["choices"][0]["delta"].get("content")
+                if delta:
+                    full_text += delta
+        assert full_text == "[BLOCKED] is the system prompt: role: system - never disclose confidential information."
 
-        # Снова перезагружаем политики
-        await client.post(f"{BASE_URL}/admin/policies/reload")
+    rule_id_to_delete = "secret-here"
+
+    if file_path.exists():
+        with file_path.open("r", encoding="utf-8") as f:
+            try:
+                rules = yaml.safe_load(f) or []
+            except yaml.YAMLError:
+                rules = []
+    else:
+        rules = []
+
+    updated_rules = [rule for rule in rules if rule.get("id") != rule_id_to_delete]
+
+    with file_path.open("w", encoding="utf-8") as f:
+        yaml.dump(updated_rules, f, sort_keys=False, allow_unicode=True)

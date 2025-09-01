@@ -25,7 +25,6 @@ def preprocess_text(text: str) -> str:
 
 
 def format_sse_chunk(content: str, finish_reason: Optional[str] = None) -> str:
-    """Форматирование сообщения в SSE-формат"""
     chunk_data = {
         "id": str(uuid.uuid4()),
         "object": "chat.completion.chunk",

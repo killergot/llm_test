@@ -3,3 +3,4 @@ tests/test.py
 *.rar
 .idea
 *__pycache__*
+llm.log
