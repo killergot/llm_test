@@ -11,6 +11,12 @@
 ## Простой способ протестировать поток
 Открываем страницу test.html и пишем текст в поле ввода после запуска API
 
+Ключевые слова для смены текста выдаваемого заглушкой:
+- inj
+- leak
+- pii
+- secrets
+
 ## Примеры curl запросов:
 
 К основной ручке:
@@ -33,14 +39,6 @@ curl -X POST "http://localhost:8000/admin/policies/reload"
 ```
 curl -X GET "http://localhost:8000/admin/policies/effective"
 ```
-
-
-Ключевые слова для смены текста выдаваемого заглушкой:
-- inj
-- leak
-- pii
-- secrets
-
 
 ## API Endpoints
 
