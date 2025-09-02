@@ -40,6 +40,11 @@ curl -X POST "http://localhost:8000/admin/policies/reload"
 curl -X GET "http://localhost:8000/admin/policies/effective"
 ```
 
+## Некоторые проблемы
+- Непонятно как описать возможные проблемы в правилах
+- Не очень плавная отдача токенов
+- Стандартные правила начинают работать от размера буфера в 20 токенов
+
 ## API Endpoints
 
 ### 1. Chat Completions
