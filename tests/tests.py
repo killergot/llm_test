@@ -28,7 +28,7 @@ def test_chat_completions_stream_full_text():
                 data = line[len("data: "):]
                 if data == "[DONE]":
                     break
-                # парсим JSON чанка
+
                 chunk = json.loads(data)
                 choice = chunk["choices"][0]
                 finish_reason = choice.get("finish_reason") or finish_reason
