@@ -71,7 +71,7 @@ async def generate_response(messages: list, stream: bool) -> AsyncGenerator[str,
     else:
         path = 'benign'
 
-    full_path: Path = (Path(__file__).parent.parent.parent.parent.parent
+    full_path: Path = (Path(__file__).parent.parent.parent.parent / 'data'
                        / 'fixtures' / (path+'.txt'))
 
     with open(full_path, "r", encoding="utf-8") as file:

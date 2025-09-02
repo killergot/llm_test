@@ -77,7 +77,7 @@ class PolicyRule:
 
 
 class PolicyEngine:
-    def __init__(self, policies_dir: Path = Path(__file__).resolve().parent.parent.parent / 'policies'):
+    def __init__(self, policies_dir: Path = Path(__file__).resolve().parent.parent/'data' / 'policies'):
         self.revision = 1
         self.policies_dir = policies_dir
         self.rules: List[PolicyRule] = []

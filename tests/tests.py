@@ -97,7 +97,7 @@ def test_chat_aiguardian_action_mask(monkeypatch):
 
 
 def test_chat_reload(monkeypatch):
-    file_path = Path(__file__).parent.parent / 'policies' / 'secrets.yaml'
+    file_path = Path(__file__).parent.parent /'app'/'data'/ 'policies' / 'secrets.yaml'
 
     new_rule = {
         "id": "secret-here",

@@ -95,7 +95,7 @@
       // Сообщение ассистента (пустое, будем дополнять)
       const assistantEl = addMessage("", "assistant");
 
-      const response = await fetch("http://127.0.0.1:8002/v1/chat/completions", {
+      const response = await fetch("http://localhost:8000/v1/chat/completions", {
         method: "POST",
         headers: {
           "accept": "application/json",
