@@ -7,6 +7,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app  # чтобы изменения в коде сразу подтягивались
+      - .:/app
     environment:
       - PYTHONUNBUFFERED=1
