@@ -3,9 +3,11 @@
 
 ## Как запустить
 1. Через docker compose
+- Создать файл .env на подобии .env.example
 - docker compose build
 - docker compose up
 2. Через minikube (kubernetis k8s)
+- Создать файл .env на подобии .env.example
 - make up
 
 ## Простой способ протестировать поток
