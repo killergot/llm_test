@@ -18,8 +18,8 @@ logging.basicConfig(
 from pydantic import BaseModel
 
 from app.config import load_config, Config
-from app.utils.sse import preprocess_text, format_sse_chunk
-from app.utils.policy import engine, PolicyViolation
+from app.core.sse import preprocess_text, format_sse_chunk
+from app.core.policy import engine, PolicyViolation
 
 router = APIRouter()
 
@@ -89,6 +89,7 @@ async def generate_response(messages: list, stream: bool) -> AsyncGenerator[str,
             yield format_sse_chunk("", finish_reason="content_filter")
             return
 
+        print(f'{full_text = }')
         yield format_sse_chunk(full_text, finish_reason="stop")
         return
 
@@ -158,7 +159,11 @@ async def chat_completions(request: ChatCompletionRequest):
             )
 
         response_content = await anext(generator)
-        return json.loads(response_content)
+        if response_content.startswith("data: "):
+            response_content = response_content[len("data: "):]
+
+        if response_content.strip():
+            return json.loads(response_content)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

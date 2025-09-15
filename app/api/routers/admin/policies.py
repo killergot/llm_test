@@ -4,7 +4,7 @@ from typing import Optional, List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.utils.policy import engine, PolicyViolation
+from app.core.policy import engine, PolicyViolation
 
 router = APIRouter(prefix="/policies")
 
